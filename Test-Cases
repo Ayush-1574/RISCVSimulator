@@ -1,9 +1,0 @@
-<script>start("c:\\Users\\ayush\\Downloads\\project_CA_ka\\RISCV_ASSEMBLER-main\\Test-Cases\\");</script>
-<script>onHasParentDirectory();</script>
-<script>addRow("addi.asm","addi.asm",0,152,"152 B",1744572708,"4/14/25, 1:01:48 AM");</script>
-<script>addRow("bs.asm","bs.asm",0,1256,"1.2 kB",1744572921,"4/14/25, 1:05:21 AM");</script>
-<script>addRow("fact.asm","fact.asm",0,164,"164 B",1744557220,"4/13/25, 8:43:40 PM");</script>
-<script>addRow("fib.asm","fib.asm",0,249,"249 B",1744533815,"4/13/25, 2:13:35 PM");</script>
-<script>addRow("merge.asm","merge.asm",0,1680,"1.6 kB",1744547563,"4/13/25, 6:02:43 PM");</script>
-<script>addRow("palindrome.asm","palindrome.asm",0,893,"893 B",1744547875,"4/13/25, 6:07:55 PM");</script>
-<script>addRow("test3_bouble _sort.asm","test3_bouble%20_sort.asm",0,1878,"1.8 kB",1744533815,"4/13/25, 2:13:35 PM");</script>
