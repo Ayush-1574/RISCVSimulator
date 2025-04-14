@@ -60,10 +60,10 @@ bool is_valid_hex(const string& str) {
 void init_sim() {
     // Clear register file
     reg_file.fill(0);
-    reg_file[2] = 0x7FFFFFDC; // Stack pointer
+    reg_file[2] = 0x7FFFFFE4; // Stack pointer
     reg_file[3] = 0x10000000; // Link register
     reg_file[10] = 0x00000001;
-    reg_file[11] = 0x07FFFFDC;
+    reg_file[11] = 0x07FFFFE4;
 
     // Clear memory structures
     code.clear();
@@ -502,7 +502,7 @@ else if (opcode == stoul(S_opcode_map["sb"], nullptr, 2)) {
         cout << "  ,JAL: rd = x" << dst_reg << ", offset = " << to_hex(rm) << endl;
     }
     else if(ctrl.alu_op == "STORE"){
-        cout << " RS1 : " << rs1 << "  RS2 : " << rs2 << "  imm : " <<imm_s << "ALU_Store"<< ctrl.alu_op << endl;
+        cout << " RS1 : x" << rs1  << " = "<< to_hex(reg_file[rs1])<< "  RS2 : x" << rs2 << " = " <<to_hex(reg_file[rs2]) <<"  imm : " <<to_hex(rm) << "  ALU_Store  "<< ctrl.alu_op << endl;
     }
     else {
         cout << ", RD: x" << dec << dst_reg
@@ -580,6 +580,8 @@ void execute() {
     cout << "ALU Op: " << ctrl.alu_op << ", Result: " << to_hex(rz);
     if (ctrl.branch) cout << ", Branch Taken: " << branch_taken;
     cout << endl;
+
+    
 }
 // Memory access stage
 void memory_access() {
