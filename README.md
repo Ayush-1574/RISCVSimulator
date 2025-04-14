@@ -14,7 +14,7 @@ The team members are:
 
 <br>
 
-The simulator is written in `C`, the GUI is written in `ReactJs` and `NodeJs`.
+The simulator is written in `C++`, the GUI is written in `ReactJs` and `NodeJs`.
 
 <br>
 
