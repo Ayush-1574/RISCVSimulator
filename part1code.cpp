@@ -135,7 +135,7 @@ void dataDirectives(vector<string> dataInst) {
             string s = remainder.substr(1, remainder.length() - 2);
          
             for (char c : s) {
-                int ascii_val = static_cast<unsigned char>(c);
+                int ascii_val = static_cast<unsigned char>(c); // convert into ascii value
                 string hex_address = binaryToHex(decToBinary_Len(memory_address, 32), 32);
                 string hex_data = binaryToHex(decToBinary_Len(ascii_val, 8), 8);
                 output_string = hex_address + " " + hex_data;
@@ -249,12 +249,16 @@ int main()
                 }
                 catch (exception ex)
                 {
+                   
                 }
                 pc += 4;
             }
         }
     }
 
+     for(const auto& pair : labels){
+         cout << pair.first << " " << pair.second << endl;
+     }
     // Assembling Text Instructions
     line = "";
     pc = 0;
@@ -322,7 +326,7 @@ int main()
         string binary_output = binary_instruction;
 
         // Format output as "0xPC_HEX 0xINSTRUCTION_HEX"
-        output_string = hex_pc + " " + hex_instruction;// + "  # " + binary_output;
+        output_string = hex_pc + " " + hex_instruction + "  # " + binary_output;
         textOutputCode.push_back(output_string); // Store in textOutputCode
         cout << "TEXT:" << output_string << endl;
 
