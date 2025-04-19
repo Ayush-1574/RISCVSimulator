@@ -389,6 +389,7 @@ void fetch() {
             stats.stall_count++;
             cout << "Fetch: Stalled\n";
             if_id = IF_ID_Register();
+            stall_pipeline = false; // Clear stall after one cycle
         }
         return;
     }
@@ -712,8 +713,8 @@ void decode() {
             cout << "Misprediction: Flushing pipeline, ActualTarget=" << to_hex(branch_target)
                  << ", PredictedTarget=" << to_hex(predicted_target) << "\n";
             pc = branch_target; // Set PC to correct target
-            if_id = IF_ID_Register(); // Flush IF/ID
-            // Do NOT clear id_ex, keep current instruction valid
+            if_id = IF_ID_Register(); // Flush IF/ID to discard mispredicted fetch
+            stall_pipeline = true; // Trigger stall for next cycle
             stats.branch_mispredictions++;
             stats.control_hazards++;
             stats.stalls_control_hazards++;
@@ -901,8 +902,10 @@ void writeback() {
         return;
     }
 
-    stats.total_instructions++; // Count all instructions
-    cout << "Total Instructions are :  " << stats.total_instructions << endl;
+    if (!mem_wb.ctrl.is_nop) {
+        stats.total_instructions++; // Count only non-NOP instructions
+        cout << "Total Instructions are :  " << stats.total_instructions << endl;
+    }
 
     if (mem_wb.ctrl.reg_write && mem_wb.rd != 0) {
         if (mem_wb.ctrl.output_sel == 2) {
