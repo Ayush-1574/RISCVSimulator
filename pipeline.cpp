@@ -999,52 +999,24 @@ void print_statistics() {
     cout << "Stalls Due to Data Hazards: " << stats.stalls_data_hazards << "\n";
     cout << "Stalls Due to Control Hazards: " << stats.stalls_control_hazards << "\n";
 }
+void configure_knobs() {
+    // Set knob values here (change these to control the simulator)
+    knobs.enable_pipelining = true;          // Knob1: Enable pipelining
+    knobs.enable_data_forwarding = true;     // Knob2: Enable data forwarding
+    knobs.print_reg_file = true;             // Knob3: Print register file each cycle
+    knobs.print_pipeline_regs = true;        // Knob4: Print pipeline registers each cycle
+    knobs.trace_instruction = -1;            // Knob5: Trace specific instruction (-1 to disable, e.g., 10 for 10th instruction)
+    knobs.print_branch_predictor = true;     // Knob6: Print branch predictor state each cycle
 
-void process_options(int argc, char* argv[], string& text_file, string& data_file) {
-    text_file = "text.mc";
-    data_file = "data.mc";
-
-    for (int i = 1; i < argc; i++) {
-        string arg = argv[i];
-        if (arg == "-t" || arg == "--text") {
-            if (i + 1 < argc) {
-                text_file = argv[++i];
-            } else {
-                cerr << "Error: Text file path missing after " << arg << "\n";
-                exit(1);
-            }
-        } else if (arg == "-d" || arg == "--data") {
-            if (i + 1 < argc) {
-                data_file = argv[++i];
-            } else {
-                cerr << "Error: Data file path missing after " << arg << "\n";
-                exit(1);
-            }
-        } else if (arg == "-p" || arg == "--pipelining") {
-            knobs.enable_pipelining = true;
-            cout << "Pipelining enabled\n";
-        } else if (arg == "-f" || arg == "--forwarding") {
-            knobs.enable_data_forwarding = true;
-            cout << "Data forwarding enabled\n";
-        } else if (arg == "-h" || arg == "--help") {
-            cout << "Usage: " << argv[0] << " [options]\n";
-            cout << "Options:\n";
-            cout << "  -t, --text FILE      Specify text segment file (default: text.mc)\n";
-            cout << "  -d, --data FILE      Specify data segment file (default: data.mc)\n";
-            cout << "  -p, --pipelining     Enable pipelining\n";
-            cout << "  -f, --forwarding     Enable data forwarding\n";
-            cout << "  -h, --help           Display this help message\n";
-            exit(0);
-        } else {
-            cerr << "Unknown option: " << arg << "\nUse --help for usage information\n";
-            exit(1);
-        }
-    }
-
-    cout << "Using text file: " << text_file << "\n";
-    cout << "Using data file: " << data_file << "\n";
+    // Print knob settings for clarity
+    cout << "Knob settings:\n";
+    cout << "  Pipelining: " << (knobs.enable_pipelining ? "Enabled" : "Disabled") << "\n";
+    cout << "  Data Forwarding: " << (knobs.enable_data_forwarding ? "Enabled" : "Disabled") << "\n";
+    cout << "  Print Register File: " << (knobs.print_reg_file ? "Enabled" : "Disabled") << "\n";
+    cout << "  Print Pipeline Registers: " << (knobs.print_pipeline_regs ? "Enabled" : "Disabled") << "\n";
+    cout << "  Trace Instruction: " << (knobs.trace_instruction >= 0 ? to_string(knobs.trace_instruction) : "Disabled") << "\n";
+    cout << "  Print Branch Predictor: " << (knobs.print_branch_predictor ? "Enabled" : "Disabled") << "\n";
 }
-
 void initialize_simulator() {
     text_memory.clear();
     data_memory.clear();
@@ -1073,7 +1045,6 @@ void initialize_simulator() {
     branch_predictor = new BranchPredictor(16); // BTB size = 16
     cout << "Simulator initialized, BTB cleared\n";
 }
-
 void run_simulation() {
     stats.total_cycles = 0;
     stats.total_instructions = 0;
@@ -1081,42 +1052,88 @@ void run_simulation() {
     stall_pipeline = false;
 
     cout << "Starting simulation...\n";
-    cout << "Pipelining enabled: " << knobs.enable_pipelining << "\n";
+    cout << "Pipelining: " << (knobs.enable_pipelining ? "Enabled" : "Disabled") << "\n";
 
-    while (stats.total_cycles < MAX_CYCLES &&
-           (!program_done || if_id.is_valid || id_ex.is_valid || ex_mem.is_valid || mem_wb.is_valid)) {
-        cout << "\n=== Cycle " << stats.total_cycles + 1 << " ===\n";
-        stall_pipeline = detect_data_hazard();
+    if (knobs.enable_pipelining) {
+        // Pipelined execution
+        while (stats.total_cycles < MAX_CYCLES &&
+               (!program_done || if_id.is_valid || id_ex.is_valid || ex_mem.is_valid || mem_wb.is_valid)) {
+            cout << "\n=== Cycle " << stats.total_cycles + 1 << " ===\n";
+            stall_pipeline = detect_data_hazard();
 
-        writeback();
-        memory();
-        execute();
-        decode();
+            writeback();
+            memory();
+            execute();
+            decode();
+            fetch();
 
-        fetch();
-       
+            stats.total_cycles++;
 
-       
-        stats.total_cycles++;
+            // Respect knobs for printing and tracing
+            print_pipeline_registers(); // Knob4
+            print_register_file();      // Knob3
+            trace_instruction(knobs.trace_instruction); // Knob5
+            branch_predictor->print_state(); // Knob6
+        }
+    } else {
+        // Non-pipelined execution
+        while (stats.total_cycles < MAX_CYCLES && !program_done) {
+            cout << "\n=== Cycle " << stats.total_cycles + 1 << " ===\n";
 
-        print_pipeline_registers();
-       // print_register_file();
-        branch_predictor->print_state();
+            // Fetch
+            fetch();
+            if (!if_id.is_valid) {
+                // No more instructions, check if pipeline is empty
+                if (!if_id.is_valid && !id_ex.is_valid && !ex_mem.is_valid && !mem_wb.is_valid) {
+                    program_done = true;
+                }
+                stats.total_cycles++;
+                continue;
+            }
+
+            // Decode
+            decode();
+            if (!id_ex.is_valid) {
+                stats.total_cycles++;
+                continue;
+            }
+
+            // Execute
+            execute();
+            if (!ex_mem.is_valid) {
+                stats.total_cycles++;
+                continue;
+            }
+
+            // Memory
+            memory();
+            if (!mem_wb.is_valid) {
+                stats.total_cycles++;
+                continue;
+            }
+
+            // Writeback
+            writeback();
+
+            stats.total_cycles++;
+
+            // Respect knobs for printing and tracing
+            print_pipeline_registers(); // Knob4
+            print_register_file();      // Knob3
+            trace_instruction(knobs.trace_instruction); // Knob5
+            branch_predictor->print_state(); // Knob6
+        }
     }
 
     print_statistics();
     write_data_mc("data.mc");
 }
+int main() {
+    string text_file = "text.mc";
+    string data_file = "data.mc";
 
-int main(int argc, char* argv[]) {
-    string text_file, data_file;
-    process_options(argc, argv, text_file, data_file);
-
-    knobs.enable_pipelining = true;
-    knobs.print_pipeline_regs = true;
-    knobs.print_reg_file = true;
-    knobs.print_branch_predictor = true;
-    knobs.trace_instruction = -1;
+    // Configure knobs
+    configure_knobs();
 
     initialize_simulator();
 
@@ -1132,4 +1149,4 @@ int main(int argc, char* argv[]) {
     branch_predictor = nullptr;
 
     return 0;
-} 
+}
