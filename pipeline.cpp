@@ -387,6 +387,7 @@ void fetch() {
     if (program_done || stall_pipeline) {
         if (stall_pipeline) {
             stats.stall_count++;
+            
             cout << "Fetch: Stalled\n";
             if_id = IF_ID_Register();
             stall_pipeline = false; // Clear stall after one cycle
@@ -408,14 +409,13 @@ void fetch() {
         cout << "Fetch: No instruction at PC=" << to_hex(pc) << ", marking IF/ID invalid\n";
         if_id = IF_ID_Register();
         pc += 4;
-        // Only set program_done if all pipeline stages are empty and 13 instructions are processed
-        if (!if_id.is_valid && !id_ex.is_valid && !ex_mem.is_valid && !mem_wb.is_valid && instruction_count >= 13) {
-            cout << "Fetch: Pipeline empty, setting program_done\n";
+        // Set program_done if all pipeline stages are empty
+        if (!if_id.is_valid && !id_ex.is_valid && !ex_mem.is_valid && !mem_wb.is_valid) {
+            cout << "Fetch: Pipeline empty and no more instructions, setting program_done\n";
             program_done = true;
         }
         return;
     }
-
     if_id.pc = pc;
     if_id.ir = ir;
     if_id.is_valid = true;
@@ -718,7 +718,7 @@ void decode() {
             stats.branch_mispredictions++;
             stats.control_hazards++;
             stats.stalls_control_hazards++;
-            stats.stall_count++;
+            //stats.stall_count++;
         } else {
             cout << "Prediction correct: Taken=" << branch_taken << ", Target=" << to_hex(branch_target) << "\n";
         }
@@ -1092,12 +1092,15 @@ void run_simulation() {
         memory();
         execute();
         decode();
-        fetch();
 
+        fetch();
+       
+
+       
         stats.total_cycles++;
 
         print_pipeline_registers();
-        //print_register_file();
+       // print_register_file();
         branch_predictor->print_state();
     }
 
