@@ -13,6 +13,7 @@
 #include "Instructions_Func.h"
 #include "Auxiliary_Functions.h"
 
+
 // Function to sign-extend a value
 int32_t sign_extend(uint32_t value, int bits) {
     int32_t mask = 1 << (bits - 1);
@@ -311,8 +312,9 @@ void write_data_mc(const string& filename) {
         file << to_hex(mem_pair.first) << " " << to_hex(mem_pair.second) << "\n";
     }
     file.close();
-}bool detect_data_hazard() {
-    if (!knobs.enable_pipelining || !if_id.is_valid || !id_ex.is_valid) return false;
+}
+bool detect_data_hazard() {
+    if (!knobs.enable_pipelining || !if_id.is_valid) return false;
 
     uint32_t ir = if_id.ir;
     if (ir == 0) return false;
@@ -321,23 +323,21 @@ void write_data_mc(const string& filename) {
     uint32_t rs1 = (ir >> 15) & 0x1F;
     uint32_t rs2 = (ir >> 20) & 0x1F;
 
-    // Instructions that use rs1
-    bool uses_rs1 = (opcode == stoul(R_opcode_map["add"], nullptr, 2) ||  // R-type
-                     opcode == stoul(I_opcode_map["addi"], nullptr, 2) || // I-type (arith, load, jalr)
-                     opcode == stoul(I_opcode_map["lw"], nullptr, 2) ||   // Load
-                     opcode == stoul(I_opcode_map["jalr"], nullptr, 2) || // JALR
-                     opcode == stoul(S_opcode_map["sw"], nullptr, 2) ||   // S-type
-                     opcode == stoul(SB_opcode_map["beq"], nullptr, 2));  // SB-type
+    bool uses_rs1 = (opcode == stoul(R_opcode_map["add"], nullptr, 2) ||
+                     opcode == stoul(I_opcode_map["addi"], nullptr, 2) ||
+                     opcode == stoul(I_opcode_map["lw"], nullptr, 2) ||
+                     opcode == stoul(I_opcode_map["jalr"], nullptr, 2) ||
+                     opcode == stoul(S_opcode_map["sw"], nullptr, 2) ||
+                     opcode == stoul(SB_opcode_map["beq"], nullptr, 2));
 
-    // Instructions that use rs2
-    bool uses_rs2 = (opcode == stoul(R_opcode_map["add"], nullptr, 2) ||  // R-type
-                     opcode == stoul(S_opcode_map["sw"], nullptr, 2) ||   // S-type
-                     opcode == stoul(SB_opcode_map["beq"], nullptr, 2));  // SB-type
+    bool uses_rs2 = (opcode == stoul(R_opcode_map["add"], nullptr, 2) ||
+                     opcode == stoul(S_opcode_map["sw"], nullptr, 2) ||
+                     opcode == stoul(SB_opcode_map["beq"], nullptr, 2));
 
     // Check hazard with ID/EX
-    if (id_ex.ctrl.reg_write && id_ex.rd != 0) {
+    if (id_ex.is_valid && id_ex.ctrl.reg_write && id_ex.rd != 0) {
         if ((uses_rs1 && rs1 == id_ex.rd) || (uses_rs2 && rs2 == id_ex.rd)) {
-            if (!knobs.enable_data_forwarding || id_ex.ctrl.mem_read) { // Stall if no forwarding or load hazard
+            if (!knobs.enable_data_forwarding || id_ex.ctrl.mem_read) {
                 stats.data_hazards++;
                 stats.stalls_data_hazards++;
                 return true;
@@ -345,9 +345,18 @@ void write_data_mc(const string& filename) {
         }
     }
 
-    // Check hazard with EX/MEM (only if no forwarding)
-    if (!knobs.enable_data_forwarding && ex_mem.ctrl.reg_write && ex_mem.rd != 0) {
+    // Check hazard with EX/MEM
+    if (!knobs.enable_data_forwarding && ex_mem.is_valid && ex_mem.ctrl.reg_write && ex_mem.rd != 0) {
         if ((uses_rs1 && rs1 == ex_mem.rd) || (uses_rs2 && rs2 == ex_mem.rd)) {
+            stats.data_hazards++;
+            stats.stalls_data_hazards++;
+            return true;
+        }
+    }
+
+    // Check hazard with MEM/WB
+    if (!knobs.enable_data_forwarding && mem_wb.is_valid && mem_wb.ctrl.reg_write && mem_wb.rd != 0) {
+        if ((uses_rs1 && rs1 == mem_wb.rd) || (uses_rs2 && rs2 == mem_wb.rd)) {
             stats.data_hazards++;
             stats.stalls_data_hazards++;
             return true;
@@ -384,15 +393,17 @@ void determine_forwarding(uint32_t& reg_a_val, uint32_t& reg_b_val, uint32_t rs1
     }
 }
 void fetch() {
-    if (program_done || stall_pipeline) {
-        if (stall_pipeline) {
-            stats.stall_count++;
-            
-            cout << "Fetch: Stalled\n";
-            if_id = IF_ID_Register();
-            stall_pipeline = false; // Clear stall after one cycle
+    if (program_done) {
+        if (!if_id.is_valid && !id_ex.is_valid && !ex_mem.is_valid && !mem_wb.is_valid) {
+            cout << "Fetch: Pipeline empty and program done\n";
+            return;
         }
-        return;
+    }
+
+    if (stall_pipeline && knobs.enable_pipelining) {
+        stats.stall_count++;
+        cout << "Fetch: Stalled, keeping IF/ID unchanged\n";
+        return; // Keep if_id as is, do not advance PC
     }
 
     uint32_t ir = 0;
@@ -409,30 +420,30 @@ void fetch() {
         cout << "Fetch: No instruction at PC=" << to_hex(pc) << ", marking IF/ID invalid\n";
         if_id = IF_ID_Register();
         pc += 4;
-        // Set program_done if all pipeline stages are empty
         if (!if_id.is_valid && !id_ex.is_valid && !ex_mem.is_valid && !mem_wb.is_valid) {
             cout << "Fetch: Pipeline empty and no more instructions, setting program_done\n";
             program_done = true;
         }
         return;
     }
+
     if_id.pc = pc;
     if_id.ir = ir;
     if_id.is_valid = true;
     if_id.instr_number = ++instruction_count;
 
-    // Predict branch for next cycle
     uint32_t next_pc = pc + 4;
-    bool predicted_taken = branch_predictor->predict(pc);
-    if (predicted_taken) {
-        next_pc = branch_predictor->get_target(pc);
-    }
+    if (knobs.enable_pipelining) {
+        bool predicted_taken = branch_predictor->predict(pc);
+        if (predicted_taken) {
+            next_pc = branch_predictor->get_target(pc);
+        }
+    } // In non-pipelined mode, always assume next_pc = pc + 4
 
     pc = next_pc;
     cout << "Fetch: PC=" << to_hex(if_id.pc) << ", IR=" << to_hex(ir) << ", Instr#=" << instruction_count
-         << ", NextPC=" << to_hex(pc) << ", PredictedTaken=" << predicted_taken << "\n";
+         << ", NextPC=" << to_hex(pc) << "\n";
 }
-
 int32_t extract_immediate(uint32_t ir, char type) {
     switch (type) {
         case 'I': return sign_extend((ir >> 20) & 0xFFF, 12); // imm[11:0]
@@ -455,35 +466,35 @@ int32_t extract_immediate(uint32_t ir, char type) {
         }
         default: return 0;
     }
-}
-void decode() {
-    // Check for invalid IF/ID register or data hazard
-    if (!if_id.is_valid || detect_data_hazard()) {
+}void decode() {
+    if (!if_id.is_valid) {
         id_ex = ID_EX_Register();
-        cout << "Decode: IF/ID invalid or data hazard, inserting bubble\n";
+        cout << "Decode: IF/ID invalid, inserting bubble\n";
         return;
     }
 
-    // Initialize ID/EX register with instruction data
+    if (stall_pipeline) {
+        cout << "Decode: Pipeline stalled, keeping ID/EX unchanged\n";
+        return; // Keep id_ex as is
+    }
+
+    // ... existing decode logic ...
     uint32_t ir = if_id.ir;
     id_ex.ir = ir;
     id_ex.pc = if_id.pc;
     id_ex.instr_number = if_id.instr_number;
     id_ex.is_valid = true;
 
-    // Extract opcode and control signals
-    uint32_t opcode = ir & 0x7F;
     Control& ctrl = id_ex.ctrl;
-    ctrl = Control(); // Reset control signals
+    ctrl = Control();
 
-    // Handle invalid instruction
     if (ir == 0) {
         ctrl.is_nop = true;
         cout << "Decode: Invalid instruction (IR=0)\n";
         return;
     }
 
-    // Extract register fields
+    uint32_t opcode = ir & 0x7F;
     uint32_t rd = (ir >> 7) & 0x1F;
     uint32_t rs1 = (ir >> 15) & 0x1F;
     uint32_t rs2 = (ir >> 20) & 0x1F;
@@ -491,31 +502,25 @@ void decode() {
     uint32_t func7 = (ir >> 25) & 0x7F;
     int32_t imm = 0;
 
-    // Read register values
     int32_t reg_a_val = reg_file[rs1];
     int32_t reg_b_val = reg_file[rs2];
 
-    // Apply data forwarding
     determine_forwarding(reinterpret_cast<uint32_t&>(reg_a_val), reinterpret_cast<uint32_t&>(reg_b_val), rs1, rs2);
 
-    // Store register values and indices in ID/EX
     id_ex.rs1 = rs1;
     id_ex.rs2 = rs2;
     id_ex.rd = rd;
     id_ex.reg_a_val = reg_a_val;
     id_ex.reg_b_val = reg_b_val;
 
-    // Log decode information
     cout << "Decode: PC=" << to_hex(if_id.pc) << ", IR=" << to_hex(ir) << ", rs1=x" << rs1
          << "(" << reg_a_val << "), rs2=x" << rs2 << "(" << reg_b_val << "), rd=x" << rd << "\n";
 
-    // Control flow variables
     bool is_control = false;
     bool branch_taken = false;
     uint32_t branch_target = if_id.pc + 4;
 
-    // Decode based on opcode
-    if (opcode == stoul(R_opcode_map["add"], nullptr, 2)) { // R-type (0x33)
+    if (opcode == stoul(R_opcode_map["add"], nullptr, 2)) {
         ctrl.reg_write = true;
         stats.alu_instructions++;
         if (func3 == stoul(func3_map["add"], nullptr, 2) && func7 == stoul(func7_map["add"], nullptr, 2)) {
@@ -544,8 +549,7 @@ void decode() {
             ctrl.is_nop = true;
             cout << "Decode: Unknown R-type instruction, func3=0x" << hex << func3 << ", func7=0x" << func7 << dec << "\n";
         }
-    }
-    else if (opcode == stoul(I_opcode_map["addi"], nullptr, 2)) { // I-type arithmetic (0x13)
+    } else if (opcode == stoul(I_opcode_map["addi"], nullptr, 2)) {
         ctrl.reg_write = true;
         ctrl.use_imm = true;
         imm = sign_extend((ir >> 20) & 0xFFF, 12);
@@ -564,23 +568,22 @@ void decode() {
             ctrl.alu_op = "ANDI";
         } else if (func3 == stoul(func3_map["slli"], nullptr, 2) && func7 == stoul(func7_map["slli"], nullptr, 2)) {
             ctrl.alu_op = "SLLI";
-            imm = (ir >> 20) & 0x1F; // shamt[4:0]
+            imm = (ir >> 20) & 0x1F;
         } else if (func3 == stoul(func3_map["srli"], nullptr, 2) && func7 == stoul(func7_map["srli"], nullptr, 2)) {
             ctrl.alu_op = "SRLI";
-            imm = (ir >> 20) & 0x1F; // shamt[4:0]
+            imm = (ir >> 20) & 0x1F;
         } else if (func3 == stoul(func3_map["srai"], nullptr, 2) && func7 == stoul(func7_map["srai"], nullptr, 2)) {
             ctrl.alu_op = "SRAI";
-            imm = (ir >> 20) & 0x1F; // shamt[4:0]
+            imm = (ir >> 20) & 0x1F;
         } else {
             ctrl.is_nop = true;
             cout << "Decode: Unknown I-type arithmetic instruction, func3=0x" << hex << func3 << ", func7=0x" << func7 << dec << "\n";
         }
-    }
-    else if (opcode == stoul(I_opcode_map["lw"], nullptr, 2)) { // I-type load (0x03)
+    } else if (opcode == stoul(I_opcode_map["lw"], nullptr, 2)) {
         ctrl.reg_write = true;
         ctrl.mem_read = true;
         ctrl.use_imm = true;
-        ctrl.output_sel = 1; // Select memory result
+        ctrl.output_sel = 1;
         imm = sign_extend((ir >> 20) & 0xFFF, 12);
         stats.data_transfer_instructions++;
         if (func3 == stoul(func3_map["lb"], nullptr, 2)) {
@@ -602,8 +605,7 @@ void decode() {
             ctrl.is_nop = true;
             cout << "Decode: Unknown load instruction, func3=0x" << hex << func3 << dec << "\n";
         }
-    }
-    else if (opcode == stoul(S_opcode_map["sw"], nullptr, 2)) { // S-type store (0x23)
+    } else if (opcode == stoul(S_opcode_map["sw"], nullptr, 2)) {
         ctrl.mem_write = true;
         ctrl.reg_write = false;
         imm = extract_immediate(ir, 'S');
@@ -621,11 +623,10 @@ void decode() {
             ctrl.is_nop = true;
             cout << "Decode: Unknown store instruction, func3=0x" << hex << func3 << dec << "\n";
         }
-    }
-    else if (opcode == stoul(SB_opcode_map["beq"], nullptr, 2)) { // SB-type branch (0x63)
+    } else if (opcode == stoul(SB_opcode_map["beq"], nullptr, 2)) {
         ctrl.branch = true;
         ctrl.reg_write = false;
-        id_ex.rd = 0; // No destination register
+        id_ex.rd = 0;
         is_control = true;
         stats.control_instructions++;
         imm = extract_immediate(ir, 'B');
@@ -655,78 +656,76 @@ void decode() {
         branch_target = branch_taken ? if_id.pc + imm : if_id.pc + 4;
         cout << "Decode " << ctrl.alu_op << ": rs1=x" << rs1 << "(" << reg_a_val << "), rs2=x" << rs2
              << "(" << reg_b_val << "), Taken=" << branch_taken << ", Target=" << to_hex(branch_target) << "\n";
-    }
-    else if (opcode == stoul(UJ_opcode_map["jal"], nullptr, 2)) { // UJ-type jal (0x6F)
+    } else if (opcode == stoul(UJ_opcode_map["jal"], nullptr, 2)) {
         ctrl.reg_write = true;
         ctrl.alu_op = "JAL";
-        ctrl.output_sel = 2; // Return address
+        ctrl.output_sel = 2;
         is_control = true;
         stats.control_instructions++;
         imm = extract_immediate(ir, 'J');
         branch_taken = true;
         branch_target = if_id.pc + imm;
         cout << "Decode JAL: rd=x" << rd << ", Target=" << to_hex(branch_target) << "\n";
-    }
-    else if (opcode == stoul(I_opcode_map["jalr"], nullptr, 2)) { // I-type jalr (0x67)
+    } else if (opcode == stoul(I_opcode_map["jalr"], nullptr, 2)) {
         ctrl.reg_write = true;
         ctrl.alu_op = "JALR";
         ctrl.use_imm = true;
-        ctrl.output_sel = 2; // Return address
+        ctrl.output_sel = 2;
         is_control = true;
         stats.control_instructions++;
         imm = sign_extend((ir >> 20) & 0xFFF, 12);
         branch_taken = true;
-        branch_target = (reg_a_val + imm) & ~1; // Clear LSB
+        branch_target = (reg_a_val + imm) & ~1;
         cout << "Decode JALR: rs1=x" << rs1 << "(" << reg_a_val << "), imm=" << imm
              << ", Target=" << to_hex(branch_target) << "\n";
-    }
-    else if (opcode == stoul(U_opcode_map["lui"], nullptr, 2)) { // U-type lui (0x37)
+    } else if (opcode == stoul(U_opcode_map["lui"], nullptr, 2)) {
         ctrl.reg_write = true;
         ctrl.alu_op = "LUI";
         imm = extract_immediate(ir, 'U');
         stats.alu_instructions++;
         cout << "Decode LUI: rd=x" << rd << ", imm=" << to_hex(imm) << "\n";
-    }
-    else if (opcode == stoul(U_opcode_map["auipc"], nullptr, 2)) { // U-type auipc (0x17)
+    } else if (opcode == stoul(U_opcode_map["auipc"], nullptr, 2)) {
         ctrl.reg_write = true;
         ctrl.alu_op = "AUIPC";
         imm = extract_immediate(ir, 'U');
         stats.alu_instructions++;
         cout << "Decode AUIPC: rd=x" << rd << ", imm=" << to_hex(imm) << "\n";
-    }
-    else {
+    } else {
         ctrl.is_nop = true;
         cout << "Decode: Unknown opcode: 0x" << hex << opcode << dec << "\n";
     }
 
-    // Store immediate in ID/EX
     id_ex.imm = imm;
 
-    // Handle branch prediction for control instructions
     if (is_control) {
         uint32_t current_pc = if_id.pc;
+        if(knobs.enable_pipelining){
         bool predicted_taken = branch_predictor->predict(if_id.pc);
         uint32_t predicted_target = predicted_taken ? branch_predictor->get_target(if_id.pc) : if_id.pc + 4;
 
-        // Check for misprediction
         if (branch_taken != predicted_taken || (branch_taken && branch_target != predicted_target)) {
             cout << "Misprediction: Flushing pipeline, ActualTarget=" << to_hex(branch_target)
                  << ", PredictedTarget=" << to_hex(predicted_target) << "\n";
-            pc = branch_target; // Set PC to correct target
-            if_id = IF_ID_Register(); // Flush IF/ID to discard mispredicted fetch
-            stall_pipeline = true; // Trigger stall for next cycle
+            pc = branch_target;
+            if_id = IF_ID_Register();
+            stall_pipeline = true;
             stats.branch_mispredictions++;
             stats.control_hazards++;
             stats.stalls_control_hazards++;
-            //stats.stall_count++;
         } else {
             cout << "Prediction correct: Taken=" << branch_taken << ", Target=" << to_hex(branch_target) << "\n";
         }
 
-        // Update BTB for all control instructions
         branch_predictor->update(current_pc, branch_taken, branch_target);
     }
-}void execute() {
+    else{
+        // Non pipelined mode
+        pc = branch_target;
+        if_id = IF_ID_Register();
+        branch_predictor->update(current_pc , branch_taken , branch_target);
+        cout << "NON pipelined : Setting PC to " << to_hex(branch_target) << ", Taken" << branch_taken << endl;
+    }
+}}void execute() {
     if (!id_ex.is_valid) {
         ex_mem = EX_MEM_Register();
         cout << "Execute: ID/EX invalid, skipping\n";
@@ -1001,8 +1000,8 @@ void print_statistics() {
 }
 void configure_knobs() {
     // Set knob values here (change these to control the simulator)
-    knobs.enable_pipelining = true;          // Knob1: Enable pipelining
-    knobs.enable_data_forwarding = true;     // Knob2: Enable data forwarding
+    knobs.enable_pipelining = false;          // Knob1: Enable pipelining
+    knobs.enable_data_forwarding = false;     // Knob2: Enable data forwarding
     knobs.print_reg_file = true;             // Knob3: Print register file each cycle
     knobs.print_pipeline_regs = true;        // Knob4: Print pipeline registers each cycle
     knobs.trace_instruction = -1;            // Knob5: Trace specific instruction (-1 to disable, e.g., 10 for 10th instruction)
@@ -1044,8 +1043,7 @@ void initialize_simulator() {
     }
     branch_predictor = new BranchPredictor(16); // BTB size = 16
     cout << "Simulator initialized, BTB cleared\n";
-}
-void run_simulation() {
+}void run_simulation() {
     stats.total_cycles = 0;
     stats.total_instructions = 0;
     program_done = false;
@@ -1055,11 +1053,14 @@ void run_simulation() {
     cout << "Pipelining: " << (knobs.enable_pipelining ? "Enabled" : "Disabled") << "\n";
 
     if (knobs.enable_pipelining) {
-        // Pipelined execution
         while (stats.total_cycles < MAX_CYCLES &&
                (!program_done || if_id.is_valid || id_ex.is_valid || ex_mem.is_valid || mem_wb.is_valid)) {
             cout << "\n=== Cycle " << stats.total_cycles + 1 << " ===\n";
-            stall_pipeline = detect_data_hazard();
+
+            // Check for data hazards if not already stalling
+            if (!stall_pipeline) {
+                stall_pipeline = detect_data_hazard();
+            }
 
             writeback();
             memory();
@@ -1067,61 +1068,55 @@ void run_simulation() {
             decode();
             fetch();
 
+            // Clear stall if no hazards remain
+            if (stall_pipeline && !detect_data_hazard()) {
+                stall_pipeline = false;
+            }
+
             stats.total_cycles++;
 
-            // Respect knobs for printing and tracing
-            print_pipeline_registers(); // Knob4
-            print_register_file();      // Knob3
-            trace_instruction(knobs.trace_instruction); // Knob5
-            branch_predictor->print_state(); // Knob6
+            print_pipeline_registers();
+            print_register_file();
+            trace_instruction(knobs.trace_instruction);
+            branch_predictor->print_state();
         }
     } else {
         // Non-pipelined execution
         while (stats.total_cycles < MAX_CYCLES && !program_done) {
             cout << "\n=== Cycle " << stats.total_cycles + 1 << " ===\n";
 
-            // Fetch
             fetch();
             if (!if_id.is_valid) {
-                // No more instructions, check if pipeline is empty
-                if (!if_id.is_valid && !id_ex.is_valid && !ex_mem.is_valid && !mem_wb.is_valid) {
-                    program_done = true;
-                }
                 stats.total_cycles++;
                 continue;
             }
 
-            // Decode
             decode();
             if (!id_ex.is_valid) {
                 stats.total_cycles++;
                 continue;
             }
 
-            // Execute
             execute();
             if (!ex_mem.is_valid) {
                 stats.total_cycles++;
                 continue;
             }
 
-            // Memory
             memory();
             if (!mem_wb.is_valid) {
                 stats.total_cycles++;
                 continue;
             }
 
-            // Writeback
             writeback();
 
             stats.total_cycles++;
 
-            // Respect knobs for printing and tracing
-            print_pipeline_registers(); // Knob4
-            print_register_file();      // Knob3
-            trace_instruction(knobs.trace_instruction); // Knob5
-            branch_predictor->print_state(); // Knob6
+            print_pipeline_registers();
+            print_register_file();
+            trace_instruction(knobs.trace_instruction);
+            branch_predictor->print_state();
         }
     }
 
