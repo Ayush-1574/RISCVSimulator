@@ -965,24 +965,64 @@ void print_pipeline_registers() {
 }
 
 void trace_instruction(int instr_number) {
-    if (instr_number == -1) return;
+    if (instr_number == -1) return; // Tracing disabled
+
+    cout << "\nTracing Instruction #" << instr_number << ":\n";
+
+    // IF/ID Stage
     if (if_id.is_valid && if_id.instr_number == instr_number) {
-        cout << "Trace: Instr#" << instr_number << " in IF/ID, PC=" << to_hex(if_id.pc) << "\n";
+        cout << "IF/ID: PC=" << to_hex(if_id.pc) << ", IR=" << to_hex(if_id.ir)
+             << ", Instr#=" << if_id.instr_number << "\n";
+    } else if (if_id.instr_number == instr_number) {
+        cout << "IF/ID: INVALID (Instruction #" << instr_number << " was here but is now invalid)\n";
     }
+
+    // ID/EX Stage
     if (id_ex.is_valid && id_ex.instr_number == instr_number) {
-        cout << "Trace: Instr#" << instr_number << " in ID/EX, PC=" << to_hex(id_ex.pc)
-             << ", ALU=" << id_ex.ctrl.alu_op << "\n";
+        cout << "ID/EX: PC=" << to_hex(id_ex.pc) << ", IR=" << to_hex(id_ex.ir)
+             << ", rs1=x" << id_ex.rs1 << "(" << id_ex.reg_a_val << ")"
+             << ", rs2=x" << id_ex.rs2 << "(" << id_ex.reg_b_val << ")"
+             << ", rd=x" << id_ex.rd << ", imm=" << id_ex.imm
+             << ", ALU=" << id_ex.ctrl.alu_op
+             << ", Ctrl=" << (id_ex.ctrl.reg_write ? "RegWrite " : "")
+             << (id_ex.ctrl.mem_read ? "MemRead " : "")
+             << (id_ex.ctrl.mem_write ? "MemWrite " : "")
+             << (id_ex.ctrl.branch ? "Branch " : "")
+             << (id_ex.ctrl.use_imm ? "UseImm " : "")
+             << ", Instr#=" << id_ex.instr_number << "\n";
+    } else if (id_ex.instr_number == instr_number) {
+        cout << "ID/EX: INVALID (Instruction #" << instr_number << " was here but is now invalid)\n";
     }
+
+    // EX/MEM Stage
     if (ex_mem.is_valid && ex_mem.instr_number == instr_number) {
-        cout << "Trace: Instr#" << instr_number << " in EX/MEM, PC=" << to_hex(ex_mem.pc)
-             << ", ALU Result=" << ex_mem.alu_result << "\n";
+        cout << "EX/MEM: PC=" << to_hex(ex_mem.pc) << ", IR=" << to_hex(id_ex.ir) // Note: IR not stored in EX/MEM, using ID/EX if needed
+             << ", ALU Result=" << ex_mem.alu_result << ", rs2_val=" << ex_mem.rs2_val
+             << ", rd=x" << ex_mem.rd
+             << ", Ctrl=" << (ex_mem.ctrl.reg_write ? "RegWrite " : "")
+             << (ex_mem.ctrl.mem_read ? "MemRead " : "")
+             << (ex_mem.ctrl.mem_write ? "MemWrite " : "")
+             << (ex_mem.ctrl.branch ? "Branch " : "")
+             << (ex_mem.ctrl.use_imm ? "UseImm " : "")
+             << ", Instr#=" << ex_mem.instr_number << "\n";
+    } else if (ex_mem.instr_number == instr_number) {
+        cout << "EX/MEM: INVALID (Instruction #" << instr_number << " was here but is now invalid)\n";
     }
+
+    // MEM/WB Stage
     if (mem_wb.is_valid && mem_wb.instr_number == instr_number) {
-        cout << "Trace: Instr#" << instr_number << " in MEM/WB, PC=" << to_hex(mem_wb.pc)
-             << ", Data=" << mem_wb.write_data << "\n";
+        cout << "MEM/WB: PC=" << to_hex(mem_wb.pc) << ", IR=" << to_hex(id_ex.ir) // Note: IR not stored in MEM/WB
+             << ", Write Data=" << mem_wb.write_data << ", rd=x" << mem_wb.rd
+             << ", Ctrl=" << (mem_wb.ctrl.reg_write ? "RegWrite " : "")
+             << (mem_wb.ctrl.mem_read ? "MemRead " : "")
+             << (mem_wb.ctrl.mem_write ? "MemWrite " : "")
+             << (mem_wb.ctrl.branch ? "Branch " : "")
+             << (mem_wb.ctrl.use_imm ? "UseImm " : "")
+             << ", Instr#=" << mem_wb.instr_number << "\n";
+    } else if (mem_wb.instr_number == instr_number) {
+        cout << "MEM/WB: INVALID (Instruction #" << instr_number << " was here but is now invalid)\n";
     }
 }
-
 void print_statistics() {
     cout << "\nSimulation Statistics:\n";
     cout << "Total Cycles: " << stats.total_cycles << "\n";
@@ -1000,8 +1040,8 @@ void print_statistics() {
 }
 void configure_knobs() {
     // Set knob values here (change these to control the simulator)
-    knobs.enable_pipelining = false;          // Knob1: Enable pipelining
-    knobs.enable_data_forwarding = false;     // Knob2: Enable data forwarding
+    knobs.enable_pipelining = true;          // Knob1: Enable pipelining
+    knobs.enable_data_forwarding = true;     // Knob2: Enable data forwarding
     knobs.print_reg_file = true;             // Knob3: Print register file each cycle
     knobs.print_pipeline_regs = true;        // Knob4: Print pipeline registers each cycle
     knobs.trace_instruction = -1;            // Knob5: Trace specific instruction (-1 to disable, e.g., 10 for 10th instruction)
