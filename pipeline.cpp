@@ -127,66 +127,84 @@ MEM_WB_Register mem_wb;
 
 // Hazard/stall controls
 bool stall_pipeline = false;
-
 class BranchPredictor {
-    private:
-        struct BTBEntry {
-            uint32_t pc;
-            uint32_t target;
-            bool valid;
-            bool prediction; // 1-bit predictor: 0 (not taken), 1 (taken)
-        };
-        vector<BTBEntry> btb;
-        uint32_t btb_size;
-    
-    public:
-        BranchPredictor(uint32_t btb_s) : btb_size(btb_s) {
-            btb.resize(btb_size, {0, 0, false, false}); // Initialize: invalid, predict not taken
-        }
-    
-        bool predict(uint32_t pc) {
-            uint32_t index = (pc >> 2) % btb_size;
-            if (btb[index].valid && btb[index].pc == pc) {
-                bool predicted_taken = btb[index].prediction;
+private:
+    struct BTBEntry {
+        uint32_t pc;
+        uint32_t target;
+        bool valid;
+        bool prediction; // 1-bit predictor: 0 (not taken), 1 (taken)
+    };
+    vector<BTBEntry> btb; // No fixed size, grows dynamically
+
+public:
+    BranchPredictor(uint32_t btb_s) {
+        btb.clear(); // Initialize empty
+        cout << "Branch Predictor initialized with dynamic size\n";
+    }
+
+    bool predict(uint32_t pc) {
+        for (const auto& entry : btb) {
+            if (entry.valid && entry.pc == pc) {
+                bool predicted_taken = entry.prediction;
                 cout << "Predict: PC=" << to_hex(pc) << ", BTB hit, Prediction=" << predicted_taken << "\n";
                 return predicted_taken;
             }
-            cout << "Predict: PC=" << to_hex(pc) << ", No BTB entry, predict not taken\n";
-            return false; // Default: predict not taken
         }
-    
-        uint32_t get_target(uint32_t pc) {
-            uint32_t index = (pc >> 2) % btb_size;
-            if (btb[index].valid && btb[index].pc == pc) {
-                return btb[index].target;
+        cout << "Predict: PC=" << to_hex(pc) << ", No BTB entry, predict not taken\n";
+        return false; // Default: predict not taken
+    }
+
+    uint32_t get_target(uint32_t pc) {
+        for (const auto& entry : btb) {
+            if (entry.valid && entry.pc == pc) {
+                return entry.target;
             }
-            return pc + 4; // Default: next instruction
         }
-    
-        void update(uint32_t pc, bool taken, uint32_t target) {
-            uint32_t index = (pc >> 2) % btb_size;
-            // Store all control instructions in BTB
-            btb[index].pc = pc;
-            btb[index].target = target;
-            btb[index].valid = true;
-            btb[index].prediction = taken; // 1-bit predictor: set to actual outcome
-            cout << "BTB Update: PC=" << to_hex(pc) << ", Taken=" << taken 
-                 << ", Target=" << to_hex(target) << ", Prediction=" << btb[index].prediction << "\n";
-        }
-    
-        void print_state() {
-            if (!knobs.print_branch_predictor) return;
-            cout << "Branch Predictor State:\n";
-            for (uint32_t i = 0; i < btb_size; i++) {
-                if (btb[i].valid) {
-                    cout << "BTB[" << i << "]: PC=" << to_hex(btb[i].pc) 
-                         << ", Target=" << to_hex(btb[i].target) 
-                         << ", Prediction=" << btb[i].prediction << "\n";
+        return pc + 4; // Default: next instruction
+    }
+
+    void update(uint32_t pc, bool taken, uint32_t target) {
+        // Check if entry exists
+        for (auto& entry : btb) {
+            if (entry.valid && entry.pc == pc) {
+                // Skip if no change
+                if (entry.target == target && entry.prediction == taken) {
+                    cout << "BTB Update: PC=" << to_hex(pc) << ", No change (Target=" << to_hex(target)
+                         << ", Prediction=" << taken << ")\n";
+                    return;
                 }
+                // Update existing entry
+                entry.target = target;
+                entry.prediction = taken;
+                cout << "BTB Update: PC=" << to_hex(pc) << ", Taken=" << taken
+                     << ", Target=" << to_hex(target) << ", Prediction=" << taken << "\n";
+                return;
             }
         }
-    };
-// Global branch predictor instance
+        // Add new entry
+        btb.push_back({pc, target, true, taken});
+        cout << "BTB Update: New entry PC=" << to_hex(pc) << ", Taken=" << taken
+             << ", Target=" << to_hex(target) << ", Prediction=" << taken << "\n";
+    }
+
+    void print_state() {
+        if (!knobs.print_branch_predictor) return;
+        cout << "Branch Predictor State:\n";
+        if (btb.empty()) {
+            cout << "BTB is empty\n";
+            return;
+        }
+        for (size_t i = 0; i < btb.size(); ++i) {
+            if (btb[i].valid) {
+                cout << "BTB[" << i << "]: PC=" << to_hex(btb[i].pc)
+                     << ", Target=" << to_hex(btb[i].target)
+                     << ", Prediction=" << btb[i].prediction << "\n";
+            }
+        }
+    }
+};
+
 BranchPredictor* branch_predictor = nullptr;
 
 bool is_valid_hex(const string& str) {
